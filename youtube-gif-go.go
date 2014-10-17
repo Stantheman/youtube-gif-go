@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Stantheman/youtube-gif-go/config"
+	"github.com/Stantheman/youtube-gif-go/logger"
 	"github.com/Stantheman/youtube-gif-go/redisPool"
 	"github.com/garyburd/redigo/redis"
 	"github.com/gorilla/mux"
@@ -14,6 +16,9 @@ import (
 )
 
 // http://codegangsta.gitbooks.io/building-web-apps-with-go/
+
+var l = logger.Get()
+
 func main() {
 	conf := config.Get()
 
@@ -50,12 +55,14 @@ func GifsIndexHandler(rw http.ResponseWriter, r *http.Request) {
 	// cant tell if active image list is weird or redis
 	if exists, _ := redis.Int(c.Do("EXISTS", "active_images")); exists != 1 {
 		fmt.Fprintf(rw, "no images yet\n")
+		l.Notice("checking active_images: none yet")
 		return
 	}
 
 	images, err := redis.Strings(c.Do("LRANGE", "active_images", 0, -1))
 	if err != nil {
 		fmt.Fprintf(rw, "couldnt get images: %v\n", err.Error())
+		l.Notice("getting images: " + err.Error())
 		return
 	}
 
@@ -72,16 +79,19 @@ func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 	url, err := parseParams(r)
 	if err != nil {
 		fmt.Fprintf(rw, "Couldn't add video to queue: %v\n", err)
+		l.Err("adding video to queue: " + err.Error())
 		return
 	}
 
-	if err = addURLToRedis(url); err != nil {
+	id, err := addURLToRedis(url)
+	if err != nil {
 		fmt.Fprintf(rw, "Couldn't submit URL: %v\n", err)
+		l.Err("submitting url: " + err.Error())
 		return
 	}
 	// validate options, pass 202 Accepted
 	rw.WriteHeader(202)
-	fmt.Fprintf(rw, "url: %v\n", url)
+	fmt.Fprintf(rw, "id: %v\n", id)
 }
 
 // GifShowHandler: do we even want to hand back gifs? json?
@@ -94,6 +104,9 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 	// freak if it ain't real
 	if status, err := redis.String(c.Do("HGET", "gif:"+id, "status")); err != nil || status != "available" {
 		fmt.Fprintf(rw, "image doesnt exist\n")
+		if err := l.Notice("getting image. status is " + status + ", err is " + err.Error()); err != nil {
+			fmt.Println("this sucks")
+		}
 		return
 	}
 	// verify that the file is actually there
@@ -101,6 +114,7 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 	path := conf.Site.Gif_Dir + "/" + id + ".gif"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		fmt.Fprintf(rw, "cant find gif\n")
+		l.Notice("checking on disk path: " + err.Error())
 		return
 	}
 
@@ -109,6 +123,7 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 
 func parseParams(r *http.Request) (uri string, err error) {
 	if err = r.ParseForm(); err != nil {
+		l.Notice("parsing form: " + err.Error())
 		// weird
 		return "", err
 	}
@@ -116,18 +131,20 @@ func parseParams(r *http.Request) (uri string, err error) {
 	// validate it
 	purl, err := url.Parse(r.FormValue("url"))
 	if err != nil {
+		l.Notice("parsing url: " + err.Error())
 		return "", err
 	}
 
 	// for now
 	if purl.Host != "www.youtube.com" {
-		return "", err
+		l.Notice("checking host, isn't youtube: " + purl.Host)
+		return "", errors.New("not youtube: " + purl.Host)
 	}
 
 	return r.FormValue("url"), nil
 }
 
-func addURLToRedis(url string) (err error) {
+func addURLToRedis(url string) (id string, err error) {
 
 	c := redisPool.Pool.Get()
 	defer c.Close()
@@ -135,7 +152,8 @@ func addURLToRedis(url string) (err error) {
 	// replace id increment with GUID?
 	new_id, err := redis.Int(c.Do("INCR", "autoincr:gif"))
 	if err != nil {
-		return
+		l.Err("getting new id: " + err.Error())
+		return "", err
 	}
 	keyname := "gif:" + strconv.Itoa(new_id)
 
@@ -145,8 +163,8 @@ func addURLToRedis(url string) (err error) {
 		"id":  strconv.Itoa(new_id),
 	})
 	if err != nil {
-		// dont like assumed returns, fix
-		return
+		l.Err("marshalling json: " + err.Error())
+		return "", err
 	}
 
 	// pipelined transaction city
@@ -156,8 +174,9 @@ func addURLToRedis(url string) (err error) {
 	c.Send("HSET", keyname, "status", "pending download")
 	c.Send("PUBLISH", "download-queue", payload)
 	if _, err = c.Do("EXEC"); err != nil {
-		return
+		l.Err("adding image to redis: " + err.Error())
+		return "", err
 	}
 
-	return nil
+	return strconv.Itoa(new_id), nil
 }
