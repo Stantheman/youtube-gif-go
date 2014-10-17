@@ -162,7 +162,7 @@ func download(payload pubsubmessage, workspace string) error {
 		"--output", outFile,
 		"--write-info-json",
 		"--quiet",
-		"--format", "worstvideo",
+		"--format", "mp4", "--format", "flv",
 		payload["url"],
 	)
 
