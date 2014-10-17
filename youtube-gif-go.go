@@ -102,9 +102,14 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 	defer c.Close()
 
 	// freak if it ain't real
-	if status, err := redis.String(c.Do("HGET", "gif:"+id, "status")); err != nil {
+	status, err := redis.String(c.Do("HGET", "gif:"+id, "status"))
+	if err != nil {
 		fmt.Fprintf(rw, "gif doesnt exist\n")
 		l.Notice("getting gif: " + err.Error())
+		return
+	}
+	if status != "available" {
+		fmt.Fprintf(rw, "status: %v\n", status)
 		return
 	}
 	// verify that the file is actually there
