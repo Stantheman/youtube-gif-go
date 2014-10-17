@@ -2,8 +2,7 @@ package config
 
 import (
 	"code.google.com/p/gcfg"
-	"fmt"
-	"os"
+	"github.com/Stantheman/youtube-gif-go/logger"
 )
 
 type Config struct {
@@ -28,9 +27,9 @@ func Get() Config {
 	if conf.Worker.Dir != "" {
 		return conf
 	}
-	fmt.Println(os.Getwd())
 	if err := gcfg.ReadFileInto(&conf, "config.txt"); err != nil {
 		panic(err)
 	}
+	logger.Get().Info("Loaded configuration")
 	return conf
 }
