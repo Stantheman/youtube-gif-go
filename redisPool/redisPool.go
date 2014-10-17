@@ -2,6 +2,7 @@ package redisPool
 
 import (
 	"github.com/Stantheman/youtube-gif-go/config"
+	"github.com/Stantheman/youtube-gif-go/logger"
 	"github.com/garyburd/redigo/redis"
 	"time"
 )
@@ -11,6 +12,7 @@ var Pool = pool()
 func pool() *redis.Pool {
 	conf := config.Get()
 	connect := conf.Redis.Ip + ":" + conf.Redis.Port
+	logger.Get().Info("Getting redis pool")
 
 	return &redis.Pool{
 		MaxIdle:     3,
