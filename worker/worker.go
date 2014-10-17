@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Stantheman/youtube-gif-go/config"
+	"github.com/Stantheman/youtube-gif-go/logger"
 	"github.com/Stantheman/youtube-gif-go/redisPool"
 	"github.com/garyburd/redigo/redis"
 	"os"
@@ -38,6 +39,7 @@ var jobs = map[string]worker{
 }
 
 var conf = config.Get()
+var l = logger.Get()
 
 func main() {
 	// get the worker name
@@ -54,7 +56,7 @@ func main() {
 
 	// set up the workdir
 	if err := os.MkdirAll(conf.Worker.Dir, os.ModeDir); err != nil {
-		fmt.Println(err)
+		l.Err(err.Error())
 		return
 	}
 
@@ -65,7 +67,7 @@ func main() {
 	defer psc.Close()
 
 	if err := psc.Subscribe(queue); err != nil {
-		fmt.Printf("Can't subscribe to the %v: %v\n", queue, err.Error())
+		l.Err("Can't subscribe to the " + queue + ": " + err.Error())
 		return
 	}
 
@@ -73,7 +75,7 @@ func main() {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			if err := work(v.Data, jobname); err != nil {
-				fmt.Println(err)
+				l.Err(err.Error())
 				return
 			}
 		case redis.Subscription:
@@ -191,7 +193,9 @@ func chop(payload pubsubmessage, workspace string) error {
 		workspace+payload["id"]+".youtube",
 	)
 
-	if err := cmd.Run(); err != nil {
+	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("%#v\n", cmd)
+		l.Err(string(output))
 		return err
 	}
 
