@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Stantheman/youtube-gif-go/api"
 	"github.com/Stantheman/youtube-gif-go/config"
 	"github.com/Stantheman/youtube-gif-go/logger"
 	"github.com/Stantheman/youtube-gif-go/redisPool"
 	"github.com/garyburd/redigo/redis"
 	"github.com/gorilla/mux"
+	"github.com/unrolled/render"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 )
@@ -18,6 +19,7 @@ import (
 // http://codegangsta.gitbooks.io/building-web-apps-with-go/
 
 var l = logger.Get()
+var rend = render.New(render.Options{})
 
 func main() {
 	conf := config.Get()
@@ -31,7 +33,7 @@ func main() {
 	gifs.Methods("POST").HandlerFunc(GifsCreateHandler)
 
 	// Gifs singular
-	gif := r.PathPrefix(`/gifs/{id:\d+}/`).Subrouter()
+	gif := r.PathPrefix(`/gifs/{id:\d+}`).Subrouter()
 	gif.Methods("GET").HandlerFunc(GifShowHandler)
 
 	connect := conf.Site.Ip + ":" + conf.Site.Port
@@ -45,30 +47,29 @@ func HomeHandler(rw http.ResponseWriter, r *http.Request) {
 
 // GifsIndexHandler: ask redis for a list of completed images
 func GifsIndexHandler(rw http.ResponseWriter, r *http.Request) {
-	rw.Header().Set("Content-Type", "text/html")
-	// templating?
-	fmt.Fprintln(rw, "gifs index<br/><br/>")
 
 	c := redisPool.Pool.Get()
 	defer c.Close()
 
 	// cant tell if active image list is weird or redis
 	if exists, _ := redis.Int(c.Do("EXISTS", "active_images")); exists != 1 {
-		fmt.Fprintf(rw, "no images yet\n")
+		rend.JSON(rw, http.StatusNoContent, jsonErr(errors.New("no images")))
 		l.Notice("checking active_images: none yet")
 		return
 	}
 
 	images, err := redis.Strings(c.Do("LRANGE", "active_images", 0, -1))
 	if err != nil {
-		fmt.Fprintf(rw, "couldnt get images: %v\n", err.Error())
+		rend.JSON(rw, http.StatusInternalServerError, jsonErr(err))
 		l.Notice("getting images: " + err.Error())
 		return
 	}
 
+	jlist := make(map[string]string)
 	for _, image := range images {
-		fmt.Fprintf(rw, `<a href="/gifs/%v/">%v</a><br/>`, image, image)
+		jlist[image] = "/gifs/" + image
 	}
+	rend.JSON(rw, http.StatusOK, jlist)
 }
 
 /* GifsCreateHandler: take a URL over post and put it in a queue
@@ -76,22 +77,25 @@ Pass URL to this handler, it'll check that it looks like a URL
 give a 202 ACK, and bounce*/
 func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 
-	url, err := parseParams(r)
-	if err != nil {
-		fmt.Fprintf(rw, "Couldn't add video to queue: %v\n", err)
-		l.Err("adding video to queue: " + err.Error())
+	if err := r.ParseForm(); err != nil {
+		l.Notice("parsing form: " + err.Error())
+		rend.JSON(rw, http.StatusBadRequest, jsonErr(err))
 		return
 	}
 
-	id, err := addURLToRedis(url)
+	msg, err := api.ValidateParams(r.Form)
 	if err != nil {
-		fmt.Fprintf(rw, "Couldn't submit URL: %v\n", err)
-		l.Err("submitting url: " + err.Error())
+		rend.JSON(rw, http.StatusBadRequest, jsonErr(err))
+		return
+	}
+
+	id, err := addURLToRedis(msg)
+	if err != nil {
+		rend.JSON(rw, http.StatusInternalServerError, jsonErr(err))
 		return
 	}
 	// validate options, pass 202 Accepted
-	rw.WriteHeader(202)
-	fmt.Fprintf(rw, "id: %v\n", id)
+	rend.JSON(rw, http.StatusAccepted, map[string]string{"id": id})
 }
 
 // GifShowHandler: do we even want to hand back gifs? json?
@@ -104,50 +108,30 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 	// freak if it ain't real
 	status, err := redis.String(c.Do("HGET", "gif:"+id, "status"))
 	if err != nil {
-		fmt.Fprintf(rw, "gif doesnt exist\n")
+		rend.JSON(rw, http.StatusBadRequest, jsonErr(errors.New("gif doesn't exist")))
 		l.Notice("getting gif: " + err.Error())
 		return
 	}
+
+	// if it's not real yet, tell them
 	if status != "available" {
-		fmt.Fprintf(rw, "status: %v\n", status)
+		rend.JSON(rw, http.StatusOK, map[string]string{"status": status})
 		return
 	}
+
 	// verify that the file is actually there
 	conf := config.Get()
 	path := conf.Site.Gif_Dir + "/" + id + ".gif"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		fmt.Fprintf(rw, "cant find gif\n")
-		l.Notice("checking on disk path: " + err.Error())
+		rend.JSON(rw, http.StatusInternalServerError, jsonErr(errors.New("file doesn't exist")))
+		l.Err("checking on disk path: " + err.Error())
 		return
 	}
 
 	http.ServeFile(rw, r, path)
 }
 
-func parseParams(r *http.Request) (uri string, err error) {
-	if err = r.ParseForm(); err != nil {
-		l.Notice("parsing form: " + err.Error())
-		// weird
-		return "", err
-	}
-
-	// validate it
-	purl, err := url.Parse(r.FormValue("url"))
-	if err != nil {
-		l.Notice("parsing url: " + err.Error())
-		return "", err
-	}
-
-	// for now
-	if purl.Host != "www.youtube.com" {
-		l.Notice("checking host, isn't youtube: " + purl.Host)
-		return "", errors.New("not youtube: " + purl.Host)
-	}
-
-	return r.FormValue("url"), nil
-}
-
-func addURLToRedis(url string) (id string, err error) {
+func addURLToRedis(msg *api.PubSubMessage) (id string, err error) {
 
 	c := redisPool.Pool.Get()
 	defer c.Close()
@@ -158,13 +142,11 @@ func addURLToRedis(url string) (id string, err error) {
 		l.Err("getting new id: " + err.Error())
 		return "", err
 	}
-	keyname := "gif:" + strconv.Itoa(new_id)
+	msg.ID = strconv.Itoa(new_id)
+	keyname := "gif:" + msg.ID
 
 	// set up the json bomb for pubsub. grab pubsubmessage from worker
-	payload, err := json.Marshal(map[string]string{
-		"url": url,
-		"id":  strconv.Itoa(new_id),
-	})
+	payload, err := json.Marshal(msg)
 	if err != nil {
 		l.Err("marshalling json: " + err.Error())
 		return "", err
@@ -172,7 +154,7 @@ func addURLToRedis(url string) (id string, err error) {
 
 	// pipelined transaction city
 	c.Send("MULTI")
-	c.Send("HSET", keyname, "origin", url)
+	c.Send("HSET", keyname, "origin", msg.URL)
 	// enum/smarts for status/queue
 	c.Send("HSET", keyname, "status", "pending download")
 	c.Send("PUBLISH", "download-queue", payload)
@@ -181,5 +163,11 @@ func addURLToRedis(url string) (id string, err error) {
 		return "", err
 	}
 
-	return strconv.Itoa(new_id), nil
+	return msg.ID, nil
+}
+
+func jsonErr(msg error) (res map[string]string) {
+	return map[string]string{
+		"error": msg.Error(),
+	}
 }

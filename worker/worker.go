@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/Stantheman/youtube-gif-go/api"
 	"github.com/Stantheman/youtube-gif-go/config"
 	"github.com/Stantheman/youtube-gif-go/logger"
 	"github.com/Stantheman/youtube-gif-go/redisPool"
@@ -11,12 +13,8 @@ import (
 	"os/exec"
 )
 
-// pubsubmessages is the structure after decoding the JSON
-// published via Redis
-type pubsubmessage map[string]string
-
 // workerfunc takes a decoded message and does work on it
-type workerfunc func(payload pubsubmessage, workdir string) error
+type workerfunc func(payload api.PubSubMessage, workdir string) error
 
 type worker struct {
 	proc workerfunc
@@ -34,6 +32,10 @@ var jobs = map[string]worker{
 	},
 	"stitch": {
 		proc: stitch,
+		tell: "finalize",
+	},
+	"finalize": {
+		proc: finalize,
 		tell: "",
 	},
 }
@@ -74,9 +76,16 @@ func main() {
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
-			if err := work(v.Data, jobname); err != nil {
+			// decode json
+			payload := api.PubSubMessage{}
+			if err := json.Unmarshal(v.Data, &payload); err != nil {
 				l.Err(err.Error())
-				return
+				continue
+			}
+			// do work
+			if err := work(payload, jobname); err != nil {
+				l.Err(err.Error())
+				markFailed(payload.ID, jobname, err.Error())
 			}
 		case redis.Subscription:
 			fmt.Printf("%s: %s %d\n", v.Channel, v.Kind, v.Count)
@@ -87,49 +96,16 @@ func main() {
 	}
 }
 
-/* update tells redis about updates to images, including status,
-sending pubsub messages, and potentially adding the image to
-the list of active images.
-It takes both the serialized and unserialized json data for easy resubmission.
-Not sure how I feel about that, but doing the work twice seems silly too.
-I make up for feeling bad by thinking I could be passing different data for the
-next job*/
-func update(data []byte, payload pubsubmessage, job string) (err error) {
-	// get ready to update the image status and continue pubsubbin
-	c := redisPool.Pool.Get()
-	keyname := "gif:" + payload["id"]
-
-	// if there's no one left to tell, we're done processing
-	if jobs[job].tell == "" {
-		// Add the image to active_image list, set image to avail
-		c.Send("MULTI")
-		c.Send("RPUSH", "active_images", payload["id"])
-		c.Send("HSET", keyname, "status", "available")
-		if _, err := c.Do("EXEC"); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	// otherwise we need to update status and tell people
-	c.Send("MULTI")
-	c.Send("HSET", keyname, "status", "pending "+jobs[job].tell)
-	c.Send("PUBLISH", jobs[job].tell+"-queue", data)
-	if _, err := c.Do("EXEC"); err != nil {
-		return err
-	}
-	return nil
-}
-
 /* work is a wrapper method that does the setup and teardown around jobs */
-func work(data []byte, job string) (err error) {
-	// decode json
-	payload := make(map[string]string)
-	if err := json.Unmarshal(data, &payload); err != nil {
+func work(payload api.PubSubMessage, job string) (err error) {
+
+	// mark active
+	if err := markInProgress(payload.ID, job); err != nil {
+		markFailed(payload.ID, job, err.Error())
 		return err
 	}
 
-	workspace := conf.Worker.Dir + "/" + payload["id"] + "/"
+	workspace := conf.Worker.Dir + "/" + payload.ID + "/"
 
 	// make workspace
 	if err := os.MkdirAll(workspace, 0777); err != nil {
@@ -142,18 +118,73 @@ func work(data []byte, job string) (err error) {
 	}
 
 	// update the status
-	if err := update(data, payload, job); err != nil {
+	if err := update(payload, job); err != nil {
 		return err
 	}
 
 	return nil
 }
 
+func update(payload api.PubSubMessage, job string) (err error) {
+
+	// get ready to update the image status and continue pubsubbin
+	c := redisPool.Pool.Get()
+	keyname := "gif:" + payload.ID
+
+	// if there's no one left to tell, we're done processing
+	if jobs[job].tell == "" {
+		// Add the image to active_image list, set image to avail
+		c.Send("MULTI")
+		c.Send("RPUSH", "active_images", payload.ID)
+		c.Send("HSET", keyname, "status", "available")
+		if _, err := c.Do("EXEC"); err != nil {
+			return err
+		}
+		return nil
+	}
+	// otherwise we need to update status and tell people
+
+	// serialize payload for sending back out
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	c.Send("MULTI")
+	c.Send("HSET", keyname, "status", "pending "+jobs[job].tell)
+	c.Send("PUBLISH", jobs[job].tell+"-queue", data)
+	if _, err := c.Do("EXEC"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func markInProgress(id, job string) error {
+	c := redisPool.Pool.Get()
+	keyname := "gif:" + id
+
+	if _, err := c.Do("HSET", keyname, "status", job+"-ifying"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func markFailed(id, job, errormsg string) {
+	c := redisPool.Pool.Get()
+	keyname := "gif:" + id
+
+	if _, err := c.Do("HSET", keyname, "status", "failed at "+job+". Error: "+errormsg); err != nil {
+		// since this is the failure marker, log it and move on
+		l.Err("Failed on trying to update failure for " + id + " (" + job + ". Moving on")
+	}
+	l.Err("Making " + id + " as failed in job " + job + ".")
+}
+
 /* download uses youtube-dl to take a youtube URL and place it on disk */
-func download(payload pubsubmessage, workspace string) error {
+func download(payload api.PubSubMessage, workspace string) error {
 
 	// 1.youtube
-	outFile := workspace + payload["id"] + ".youtube"
+	outFile := workspace + payload.ID + ".youtube"
 
 	// needs config for youtube-dl path
 	cmd := exec.Command("/opt/youtube-dl",
@@ -163,14 +194,12 @@ func download(payload pubsubmessage, workspace string) error {
 		"--write-info-json",
 		"--quiet",
 		"--format", "mp4", "--format", "flv",
-		payload["url"],
+		payload.URL,
 	)
 
-	// needs logging, stdout
-	if err := cmd.Run(); err != nil {
-		return err
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return errors.New(err.Error() + ". " + string(output))
 	}
-
 	// verify that the file is actually there
 	if _, err := os.Stat(outFile); os.IsNotExist(err) {
 		return err
@@ -181,22 +210,30 @@ func download(payload pubsubmessage, workspace string) error {
 
 /* chop takes a workspace directory with an <id>.youtube file
 and uses mplayer to create a PNG file for every frame in the video*/
-func chop(payload pubsubmessage, workspace string) error {
+func chop(payload api.PubSubMessage, workspace string) error {
 
 	// https://www.youtube.com/watch?v=dgKGixi8bp8 short video
 	// need to think more about more specific flags
-	cmd := exec.Command("/usr/bin/mplayer",
-		"-ss", "0",
+	// -sstep looks neat
+	// -endpos
+	//  When used in conjunction with -ss option, -endpos time will shift forward
+	// by seconds specified with -ss if not a byte position.
+	var flags []string
+	if payload.Dur != "" {
+		flags = []string{"-endpos", payload.Dur}
+	}
+	flags = append(flags,
+		"-ss", payload.Start,
 		"-vo", "png:z=9:outdir="+workspace,
 		"-ao", "null",
 		"-really-quiet",
-		workspace+payload["id"]+".youtube",
+		workspace+payload.ID+".youtube",
 	)
 
+	cmd := exec.Command("/usr/bin/mplayer", flags...)
+
 	if output, err := cmd.CombinedOutput(); err != nil {
-		fmt.Printf("%#v\n", cmd)
-		l.Err(string(output))
-		return err
+		return errors.New(err.Error() + ". " + string(output))
 	}
 
 	// bash script would rm [0,2,4,6,8].png to make gifmaking quicker, gif smaller
@@ -216,11 +253,9 @@ func chop(payload pubsubmessage, workspace string) error {
 /* stitch takes a workspace directory of PNG files and transforms them
 into a gif on STDOUT using imagemagick, which is piped into
 gifsicle for optimization */
-func stitch(payload pubsubmessage, workspace string) error {
+func stitch(payload api.PubSubMessage, workspace string) error {
 
-	// hmmmmm
-	gifname := "/srv/git/go/src/github.com/Stantheman/youtube-gif-go/gifs/" +
-		payload["id"] + ".gif"
+	gifname := workspace + payload.ID + ".gif"
 
 	// should be configurable, make proper tmpdir etc
 	// mad lazy, shell + constant filename
@@ -230,8 +265,8 @@ func stitch(payload pubsubmessage, workspace string) error {
 			"| /usr/bin/gifsicle -O3 --colors 256 > "+gifname,
 	)
 
-	if err := cmd.Run(); err != nil {
-		return err
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return errors.New(err.Error() + ". " + string(output))
 	}
 
 	// verify that the file is actually there
@@ -239,5 +274,14 @@ func stitch(payload pubsubmessage, workspace string) error {
 		return err
 	}
 
+	return nil
+}
+
+func finalize(payload api.PubSubMessage, workspace string) error {
+	gifname := conf.Site.Gif_Dir + "/" + payload.ID + ".gif"
+
+	if err := os.Rename(workspace+payload.ID+".gif", gifname); err != nil {
+		return err
+	}
 	return nil
 }
