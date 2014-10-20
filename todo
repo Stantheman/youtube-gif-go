@@ -20,3 +20,13 @@ future
  - env vars for config - interface for config loading
  - msgpack for serializing objects?
  - check out NATS messaging queue
+
+links
+-----
+
+ - http://diveintohtml5.info/table-of-contents.html
+ - http://roca-style.org/
+ - http://amundsen.com/hypermedia/hfactor/
+ - http://www.amundsen.com/blog/archives/765
+ - http://domscripting.com/blog/display/41/
+ - http://my.safaribooksonline.com/9781449309497/id2718419?link=4710c393-f150-4818-8103-9de63121b855&cid=shareLink
