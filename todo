@@ -1,0 +1,22 @@
+api
+---
+
+ - confirm API is sane
+ - add option for timestmp, bounding box
+ - content-negotiation options or just json?
+
+worker
+------
+
+ - supervisor/launcher
+ - goroutines in while loop
+ - clean up tempdir
+ - add 'finalizer' worker for moving into place
+
+future
+======
+
+ - etcd/docker/config management stuff
+ - env vars for config - interface for config loading
+ - msgpack for serializing objects?
+ - check out NATS messaging queue
