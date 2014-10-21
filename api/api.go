@@ -16,7 +16,7 @@ type PubSubMessage struct {
 	ID      string
 	PrevDir string
 	URL     string `validate:"checkURL"`
-	Start   string `validate:"isOptionalPositive"`
+	Start   string `validate:"isOptionalNonNegative"`
 	Dur     string `validate:"isOptionalPositive"`
 	Cx      string `validate:"isOptionalPositive"`
 	Cy      string `validate:"isOptionalPositive"`
@@ -49,6 +49,7 @@ func ValidateParams(form url.Values) (*PubSubMessage, []error) {
 	// check the the params look like numbers and urls
 	vd := make(validate.V)
 	vd["isOptionalPositive"] = isOptionalPositive
+	vd["isOptionalNonNegative"] = isOptionalNonNegative
 	vd["checkURL"] = checkURL
 	if err := vd.Validate(msg); len(err) > 0 {
 		return nil, err
@@ -90,6 +91,21 @@ func isOptionalPositive(i interface{}) error {
 	}
 
 	if n <= 0 {
+		return errors.New("must be positive")
+	}
+	return nil
+}
+
+func isOptionalNonNegative(i interface{}) error {
+	if i.(string) == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(i.(string))
+	if err != nil {
+		return err
+	}
+
+	if n < 0 {
 		return errors.New("must be positive")
 	}
 	return nil
