@@ -2,49 +2,95 @@ package api
 
 import (
 	"errors"
+	"github.com/mccoyst/validate"
 	"net/url"
+	"reflect"
 	"strconv"
+	"strings"
 )
 
 // pubsubmessages is the structure after decoding the JSON
-// published via Redis
+// published via Redis. Contains API info and meta (id, prevDir)
+// do i do c_x, c_y, c_w, c_h or convert to JSON?
 type PubSubMessage struct {
-	ID    string
-	URL   string
-	Start string
-	Dur   string
+	ID      string
+	PrevDir string
+	URL     string `validate:"checkURL"`
+	Start   string `validate:"isOptionalPositive"`
+	Dur     string `validate:"isOptionalPositive"`
+	Cx      string `validate:"isOptionalPositive"`
+	Cy      string `validate:"isOptionalPositive"`
+	Cw      string `validate:"isOptionalPositive"`
+	Ch      string `validate:"isOptionalPositive"`
 }
 
-func ValidateParams(form url.Values) (*PubSubMessage, error) {
-	msg := PubSubMessage{Start: "0"}
+func ValidateParams(form url.Values) (*PubSubMessage, []error) {
+	// start being set to 0 is good
+	msg := PubSubMessage{Start: "0", PrevDir: ""}
+
+	// I am so freaking sorry. This loops over the PubSubMessage struct,
+	// checks if there's an equivalent message in the form values map,
+	// and if so, sets it.
+	s := reflect.ValueOf(&msg).Elem()
+	typeOfT := s.Type()
+	for i := 0; i < s.NumField(); i++ {
+		f := s.Field(i)
+		name := typeOfT.Field(i).Name
+		// guh
+		if name == "ID" || name == "PrevDir" {
+			continue
+		}
+		// if this element of PubSubMessage exists in the form data...
+		if item, ok := form[strings.ToLower(name)]; ok {
+			f.SetString(item[0])
+		}
+	}
+
+	// check the the params look like numbers and urls
+	vd := make(validate.V)
+	vd["isOptionalPositive"] = isOptionalPositive
+	vd["checkURL"] = checkURL
+	if err := vd.Validate(msg); len(err) > 0 {
+		return nil, err
+	}
+
+	// logic check: x,y,w,h are all-in or all-out
+	if !((msg.Cx == "" && msg.Cy == "" && msg.Cw == "" && msg.Ch == "") ||
+		(msg.Cx != "" && msg.Cy != "" && msg.Ch != "" && msg.Cw != "")) {
+		return nil, []error{errors.New("must pass crop info together")}
+	}
+
+	return &msg, nil
+}
+
+func checkURL(i interface{}) error {
+	input := i.(string)
 
 	// validate it
-	purl, err := url.Parse(form["url"][0])
+	purl, err := url.Parse(input)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// for now
 	if purl.Host != "www.youtube.com" {
-		return nil, errors.New("not youtube: " + purl.Host)
+		return errors.New("not youtube: " + purl.Host)
+	}
+	return nil
+
+}
+
+func isOptionalPositive(i interface{}) error {
+	if i.(string) == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(i.(string))
+	if err != nil {
+		return err
 	}
 
-	msg.URL = form["url"][0]
-
-	// make sure ss looks like a num
-	if ss, ok := form["start"]; ok {
-		if _, err := strconv.Atoi(ss[0]); err != nil {
-			return nil, err
-		}
-		msg.Start = form["start"][0]
+	if n <= 0 {
+		return errors.New("must be positive")
 	}
-	// make sure dur looks like a num
-	if dur, ok := form["dur"]; ok {
-		if _, err := strconv.Atoi(dur[0]); err != nil {
-			return nil, err
-		}
-		msg.Dur = form["dur"][0]
-	}
-
-	return &msg, nil
+	return nil
 }

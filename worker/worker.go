@@ -105,7 +105,7 @@ func work(payload api.PubSubMessage, job string) (err error) {
 		return err
 	}
 
-	workspace := conf.Worker.Dir + "/" + payload.ID + "/"
+	workspace := conf.Worker.Dir + "/" + payload.ID + "/" + job + "/"
 
 	// make workspace
 	if err := os.MkdirAll(workspace, 0777); err != nil {
@@ -118,14 +118,14 @@ func work(payload api.PubSubMessage, job string) (err error) {
 	}
 
 	// update the status
-	if err := update(payload, job); err != nil {
+	if err := update(payload, job, workspace); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func update(payload api.PubSubMessage, job string) (err error) {
+func update(payload api.PubSubMessage, job, workspace string) (err error) {
 
 	// get ready to update the image status and continue pubsubbin
 	c := redisPool.Pool.Get()
@@ -137,12 +137,16 @@ func update(payload api.PubSubMessage, job string) (err error) {
 		c.Send("MULTI")
 		c.Send("RPUSH", "active_images", payload.ID)
 		c.Send("HSET", keyname, "status", "available")
+		c.Send("PERSIST", keyname)
 		if _, err := c.Do("EXEC"); err != nil {
 			return err
 		}
 		return nil
 	}
 	// otherwise we need to update status and tell people
+
+	// push the new workspace onto the stack
+	payload.PrevDir = workspace
 
 	// serialize payload for sending back out
 	data, err := json.Marshal(payload)
@@ -152,6 +156,7 @@ func update(payload api.PubSubMessage, job string) (err error) {
 
 	c.Send("MULTI")
 	c.Send("HSET", keyname, "status", "pending "+jobs[job].tell)
+	c.Send("EXPIRE", keyname, 3600)
 	c.Send("PUBLISH", jobs[job].tell+"-queue", data)
 	if _, err := c.Do("EXEC"); err != nil {
 		return err
@@ -163,7 +168,10 @@ func markInProgress(id, job string) error {
 	c := redisPool.Pool.Get()
 	keyname := "gif:" + id
 
-	if _, err := c.Do("HSET", keyname, "status", job+"-ifying"); err != nil {
+	c.Send("MULTI")
+	c.Send("HSET", keyname, "status", job+"-ifying")
+	c.Send("EXPIRE", keyname, 3600)
+	if _, err := c.Do("EXEC"); err != nil {
 		return err
 	}
 	return nil
@@ -173,7 +181,10 @@ func markFailed(id, job, errormsg string) {
 	c := redisPool.Pool.Get()
 	keyname := "gif:" + id
 
-	if _, err := c.Do("HSET", keyname, "status", "failed at "+job+". Error: "+errormsg); err != nil {
+	c.Send("MULTI")
+	c.Send("HSET", keyname, "status", "failed at "+job+". Error: "+errormsg)
+	c.Send("PERSIST", keyname)
+	if _, err := c.Do("EXEC"); err != nil {
 		// since this is the failure marker, log it and move on
 		l.Err("Failed on trying to update failure for " + id + " (" + job + ". Moving on")
 	}
@@ -215,19 +226,21 @@ func chop(payload api.PubSubMessage, workspace string) error {
 	// https://www.youtube.com/watch?v=dgKGixi8bp8 short video
 	// need to think more about more specific flags
 	// -sstep looks neat
-	// -endpos
 	//  When used in conjunction with -ss option, -endpos time will shift forward
 	// by seconds specified with -ss if not a byte position.
+	// crop[=w:h:x:y] rectangle[=w:h:x:y]
+	// scale[=w:h[:interlaced[:chr_drop[:par[:par2[:presize[:noup[:arnd]]]]]]]]
 	var flags []string
 	if payload.Dur != "" {
 		flags = []string{"-endpos", payload.Dur}
 	}
+
 	flags = append(flags,
 		"-ss", payload.Start,
 		"-vo", "png:z=9:outdir="+workspace,
 		"-ao", "null",
-		"-really-quiet",
-		workspace+payload.ID+".youtube",
+		"-vf", "crop="+payload.Cw+":"+payload.Ch+":"+payload.Cx+":"+payload.Cy,
+		payload.PrevDir+payload.ID+".youtube",
 	)
 
 	cmd := exec.Command("/usr/bin/mplayer", flags...)
@@ -254,13 +267,12 @@ func chop(payload api.PubSubMessage, workspace string) error {
 into a gif on STDOUT using imagemagick, which is piped into
 gifsicle for optimization */
 func stitch(payload api.PubSubMessage, workspace string) error {
-
 	gifname := workspace + payload.ID + ".gif"
 
 	// should be configurable, make proper tmpdir etc
 	// mad lazy, shell + constant filename
 	cmd := exec.Command("/bin/bash", "-c",
-		"/usr/bin/convert +repage -fuzz 1.6% -delay 6 -loop 0 "+workspace+"*.png "+
+		"/usr/bin/convert +repage -fuzz 1.6% -delay 6 -loop 0 "+payload.PrevDir+"*.png "+
 			"-layers OptimizePlus -layers OptimizeTransparency gif:- "+
 			"| /usr/bin/gifsicle -O3 --colors 256 > "+gifname,
 	)
@@ -280,8 +292,13 @@ func stitch(payload api.PubSubMessage, workspace string) error {
 func finalize(payload api.PubSubMessage, workspace string) error {
 	gifname := conf.Site.Gif_Dir + "/" + payload.ID + ".gif"
 
-	if err := os.Rename(workspace+payload.ID+".gif", gifname); err != nil {
+	if err := os.Rename(payload.PrevDir+payload.ID+".gif", gifname); err != nil {
 		return err
 	}
+
+	if err := os.RemoveAll(conf.Worker.Dir + "/" + payload.ID); err != nil {
+		l.Err("Couldn't remove old directory: " + err.Error())
+	}
+
 	return nil
 }

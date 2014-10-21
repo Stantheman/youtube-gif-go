@@ -83,9 +83,13 @@ func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := api.ValidateParams(r.Form)
-	if err != nil {
-		rend.JSON(rw, http.StatusBadRequest, jsonErr(err))
+	msg, errs := api.ValidateParams(r.Form)
+	if len(errs) > 0 {
+		var probs []string = make([]string, 0)
+		for _, prob := range errs {
+			probs = append(probs, prob.Error())
+		}
+		rend.JSON(rw, http.StatusBadRequest, map[string][]string{"errors": probs})
 		return
 	}
 
@@ -157,6 +161,8 @@ func addURLToRedis(msg *api.PubSubMessage) (id string, err error) {
 	c.Send("HSET", keyname, "origin", msg.URL)
 	// enum/smarts for status/queue
 	c.Send("HSET", keyname, "status", "pending download")
+	// one shot, do not miss your chance to blow
+	c.Send("EXPIRE", keyname, 3600)
 	c.Send("PUBLISH", "download-queue", payload)
 	if _, err = c.Do("EXEC"); err != nil {
 		l.Err("adding image to redis: " + err.Error())
