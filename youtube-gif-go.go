@@ -99,6 +99,8 @@ func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// validate options, pass 202 Accepted
+	rw.Header().Set("Location", "/gifs/"+id)
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
 	rend.JSON(rw, http.StatusAccepted, map[string]string{"id": id})
 }
 
@@ -108,6 +110,8 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 
 	c := redisPool.Pool.Get()
 	defer c.Close()
+
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// freak if it ain't real
 	status, err := redis.String(c.Do("HGET", "gif:"+id, "status"))
