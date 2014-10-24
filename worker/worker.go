@@ -204,7 +204,7 @@ func download(payload api.PubSubMessage, workspace string) error {
 		"--output", outFile,
 		"--write-info-json",
 		"--quiet",
-		"--format", "mp4", "--format", "flv",
+		"--format", "mp4",
 		payload.URL,
 	)
 
@@ -272,7 +272,7 @@ func stitch(payload api.PubSubMessage, workspace string) error {
 	// should be configurable, make proper tmpdir etc
 	// mad lazy, shell + constant filename
 	cmd := exec.Command("/bin/bash", "-c",
-		"/usr/bin/convert +repage -fuzz 1.6% -delay 6 -loop 0 "+payload.PrevDir+"*.png "+
+		"/usr/bin/convert +repage -fuzz 1.6% -delay 4 -loop 0 "+payload.PrevDir+"*.png "+
 			"-layers OptimizePlus -layers OptimizeTransparency gif:- "+
 			"| /usr/bin/gifsicle -O3 --colors 256 > "+gifname,
 	)
