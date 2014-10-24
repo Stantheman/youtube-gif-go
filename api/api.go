@@ -17,12 +17,14 @@ type PubSubMessage struct {
 	PrevDir string
 	URL     string `validate:"checkURL"`
 	Start   string `validate:"isOptionalNonNegative"`
-	Dur     string `validate:"isOptionalPositive"`
-	Cx      string `validate:"isOptionalPositive"`
-	Cy      string `validate:"isOptionalPositive"`
-	Cw      string `validate:"isOptionalPositive"`
-	Ch      string `validate:"isOptionalPositive"`
+	Dur     string `validate:"isOptionalNonNegative"`
+	Cx      string `validate:"isOptionalNonNegative"`
+	Cy      string `validate:"isOptionalNonNegative"`
+	Cw      string `validate:"isOptionalNonNegative"`
+	Ch      string `validate:"isOptionalNonNegative"`
 }
+
+// more structs?
 
 func ValidateParams(form url.Values) (*PubSubMessage, []error) {
 	// start being set to 0 is good
@@ -48,7 +50,6 @@ func ValidateParams(form url.Values) (*PubSubMessage, []error) {
 
 	// check the the params look like numbers and urls
 	vd := make(validate.V)
-	vd["isOptionalPositive"] = isOptionalPositive
 	vd["isOptionalNonNegative"] = isOptionalNonNegative
 	vd["checkURL"] = checkURL
 	if err := vd.Validate(msg); len(err) > 0 {
@@ -79,21 +80,6 @@ func checkURL(i interface{}) error {
 	}
 	return nil
 
-}
-
-func isOptionalPositive(i interface{}) error {
-	if i.(string) == "" {
-		return nil
-	}
-	n, err := strconv.Atoi(i.(string))
-	if err != nil {
-		return err
-	}
-
-	if n <= 0 {
-		return errors.New("must be positive")
-	}
-	return nil
 }
 
 func isOptionalNonNegative(i interface{}) error {
