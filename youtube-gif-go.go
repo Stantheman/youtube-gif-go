@@ -77,6 +77,7 @@ Pass URL to this handler, it'll check that it looks like a URL
 give a 202 ACK, and bounce*/
 func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
 	if err := r.ParseForm(); err != nil {
 		l.Notice("parsing form: " + err.Error())
 		rend.JSON(rw, http.StatusBadRequest, jsonErr(err))
@@ -100,7 +101,6 @@ func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 	// validate options, pass 202 Accepted
 	rw.Header().Set("Location", "/gifs/"+id)
-	rw.Header().Set("Access-Control-Allow-Origin", "*")
 	rend.JSON(rw, http.StatusAccepted, map[string]string{"id": id})
 }
 
