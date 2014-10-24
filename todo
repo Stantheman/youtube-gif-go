@@ -1,17 +1,15 @@
 api
 ---
 
- - confirm API is sane
- - add option for timestmp, bounding box
- - content-negotiation options or just json?
+- rework to include job listings, with info for result gif
+- rel links for discoverable API?
+- ability to send size of current youtube video?
 
 worker
 ------
 
  - supervisor/launcher
  - goroutines in while loop
- - clean up tempdir
- - add 'finalizer' worker for moving into place
 
 future
 ======
@@ -31,3 +29,4 @@ links
  - http://domscripting.com/blog/display/41/
  - http://my.safaribooksonline.com/9781449309497/id2718419?link=4710c393-f150-4818-8103-9de63121b855&cid=shareLink
  - https://github.com/defunkt/jquery-pjax
+ - http://billhiggins.us/blog/2011/04/27/resty-long-ops/
