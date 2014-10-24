@@ -44,26 +44,15 @@ var conf = config.Get()
 var l = logger.Get()
 
 func main() {
-	// get the worker name
-	if len(os.Args) != 2 {
-		fmt.Println("Usage: " + os.Args[0] + " worker-name")
-		return
-	}
-	if _, ok := jobs[os.Args[1]]; ok != true {
-		fmt.Println("Usage: " + os.Args[0] + " worker-name")
-		return
-	}
 
-	jobname := os.Args[1]
-
-	// set up the workdir
-	if err := os.MkdirAll(conf.Worker.Dir, os.ModeDir); err != nil {
-		l.Err(err.Error())
+	jobname, err := get_worker_name()
+	if err != nil {
 		return
 	}
 
 	// each worker listens to its -queue for work
 	queue := jobname + "-queue"
+
 	// get a nicely wrapped pubsub connection
 	psc := redis.PubSubConn{redisPool.Pool.Get()}
 	defer psc.Close()
@@ -94,6 +83,19 @@ func main() {
 			return
 		}
 	}
+}
+
+func get_worker_name() (string, error) {
+	if len(os.Args) != 2 {
+		fmt.Println("Usage: " + os.Args[0] + " worker-name")
+		return "", err
+	}
+	if _, ok := jobs[os.Args[1]]; ok != true {
+		fmt.Println("Usage: " + os.Args[0] + " worker-name")
+		return "", err
+	}
+
+	return os.Args[1], nil
 }
 
 /* work is a wrapper method that does the setup and teardown around jobs */
