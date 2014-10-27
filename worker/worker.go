@@ -203,10 +203,9 @@ func download(payload api.PubSubMessage, workspace string) error {
 	// needs config for youtube-dl path
 	cmd := exec.Command("/opt/youtube-dl",
 		"--no-progress",
-		"--max-filesize", "10M",
+		"--max-filesize", "100M",
 		"--output", outFile,
 		"--write-info-json",
-		"--quiet",
 		"--format", "mp4",
 		payload.URL,
 	)
