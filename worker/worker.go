@@ -272,12 +272,10 @@ gifsicle for optimization */
 func stitch(payload api.PubSubMessage, workspace string) error {
 	gifname := workspace + payload.ID + ".gif"
 
-	// should be configurable, make proper tmpdir etc
-	// mad lazy, shell + constant filename
+	// -monitor
 	cmd := exec.Command("/bin/bash", "-c",
-		"/usr/bin/convert +repage -fuzz 1.6% -delay 4 -loop 0 "+payload.PrevDir+"*.png "+
-			"-layers OptimizePlus -layers OptimizeTransparency gif:- "+
-			"| /usr/bin/gifsicle -O3 --colors 256 > "+gifname,
+		"/usr/bin/gm convert +repage -fuzz 1.6% -delay 4 -loop 0 "+payload.PrevDir+"*.png "+
+			"gif:"+gifname,
 	)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
