@@ -45,10 +45,7 @@ var l = logger.Get()
 
 func main() {
 
-	jobname, err := get_worker_name()
-	if err != nil {
-		return
-	}
+	jobname := get_worker_name()
 
 	// each worker listens to its -queue for work
 	queue := jobname + "-queue"
@@ -65,17 +62,7 @@ func main() {
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
-			// decode json
-			payload := api.PubSubMessage{}
-			if err := json.Unmarshal(v.Data, &payload); err != nil {
-				l.Err(err.Error())
-				continue
-			}
-			// do work
-			if err := work(payload, jobname); err != nil {
-				l.Err(err.Error())
-				markFailed(payload.ID, jobname, err.Error())
-			}
+			go process_message(v.Data, jobname)
 		case redis.Subscription:
 			fmt.Printf("%s: %s %d\n", v.Channel, v.Kind, v.Count)
 		case error:
@@ -85,17 +72,31 @@ func main() {
 	}
 }
 
-func get_worker_name() (string, error) {
+func get_worker_name() string {
 	if len(os.Args) != 2 {
 		fmt.Println("Usage: " + os.Args[0] + " worker-name")
-		return "", err
+		os.Exit(1)
 	}
 	if _, ok := jobs[os.Args[1]]; ok != true {
 		fmt.Println("Usage: " + os.Args[0] + " worker-name")
-		return "", err
+		os.Exit(1)
 	}
 
-	return os.Args[1], nil
+	return os.Args[1]
+}
+
+func process_message(data []byte, jobname string) {
+	// decode json
+	payload := api.PubSubMessage{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		l.Err(err.Error())
+		return
+	}
+	// do work
+	if err := work(payload, jobname); err != nil {
+		l.Err(err.Error())
+		markFailed(payload.ID, jobname, err.Error())
+	}
 }
 
 /* work is a wrapper method that does the setup and teardown around jobs */
