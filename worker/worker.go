@@ -232,20 +232,17 @@ func chop(payload api.PubSubMessage, workspace string) error {
 	// by seconds specified with -ss if not a byte position.
 	// crop[=w:h:x:y] rectangle[=w:h:x:y]
 	// scale[=w:h[:interlaced[:chr_drop[:par[:par2[:presize[:noup[:arnd]]]]]]]]
-	var flags []string
+	var flags = []string{"-ss", payload.Start, "-i", payload.PrevDir + payload.ID + ".youtube"}
 	if payload.Dur != "" {
-		flags = []string{"-endpos", payload.Dur}
+		flags = append(flags, "-t", payload.Dur)
 	}
 
 	flags = append(flags,
-		"-ss", payload.Start,
-		"-vo", "png:z=9:outdir="+workspace,
-		"-ao", "null",
 		"-vf", "crop="+payload.Cw+":"+payload.Ch+":"+payload.Cx+":"+payload.Cy,
-		payload.PrevDir+payload.ID+".youtube",
+		workspace+"%08d.png",
 	)
 
-	cmd := exec.Command("/usr/bin/mplayer", flags...)
+	cmd := exec.Command("/usr/local/bin/avconv", flags...)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return errors.New(err.Error() + ". " + string(output))
@@ -253,11 +250,6 @@ func chop(payload api.PubSubMessage, workspace string) error {
 
 	// bash script would rm [0,2,4,6,8].png to make gifmaking quicker, gif smaller
 	// think about doing that at some boundary
-
-	// mplayer uses the following format to make pngs, so the 00000001.png assumption
-	// is technically...ok. replace w/ subdir for pngs, subdir per job type?
-	//   snprintf (buf, 100, "%s/%s%08d.png", png_outdir, png_outfile_prefix, ++framenum);
-	// verify that the file is actually there
 	if _, err := os.Stat(workspace + "00000001.png"); os.IsNotExist(err) {
 		return err
 	}
