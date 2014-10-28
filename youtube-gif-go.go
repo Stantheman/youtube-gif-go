@@ -36,6 +36,10 @@ func main() {
 	gif := r.PathPrefix(`/gifs/{id:\d+}`).Subrouter()
 	gif.Methods("GET").HandlerFunc(GifShowHandler)
 
+	// Job singular
+	job := r.PathPrefix(`/jobs/{id:\d+}`).Subrouter()
+	job.Methods("GET").HandlerFunc(JobShowHandler)
+
 	connect := conf.Site.Ip + ":" + conf.Site.Port
 	fmt.Println("Starting server on " + connect)
 	http.ListenAndServe(connect, r)
@@ -100,7 +104,7 @@ func GifsCreateHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// validate options, pass 202 Accepted
-	rw.Header().Set("Location", "/gifs/"+id)
+	rw.Header().Set("Location", "/jobs/"+id)
 	rend.JSON(rw, http.StatusAccepted, map[string]string{"id": id})
 }
 
@@ -113,20 +117,6 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 
 	rw.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// freak if it ain't real
-	status, err := redis.String(c.Do("HGET", "gif:"+id, "status"))
-	if err != nil {
-		rend.JSON(rw, http.StatusBadRequest, jsonErr(errors.New("gif doesn't exist")))
-		l.Notice("getting gif: " + err.Error())
-		return
-	}
-
-	// if it's not real yet, tell them
-	if status != "available" {
-		rend.JSON(rw, http.StatusOK, map[string]string{"status": status})
-		return
-	}
-
 	// verify that the file is actually there
 	conf := config.Get()
 	path := conf.Site.Gif_Dir + "/" + id + ".gif"
@@ -137,6 +127,25 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeFile(rw, r, path)
+}
+
+func JobShowHandler(rw http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	c := redisPool.Pool.Get()
+	defer c.Close()
+
+	rw.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// freak if it ain't real
+	resp, err := redis.Strings(c.Do("HMGET", "gif:"+id, "status", "description"))
+	if err != nil {
+		rend.JSON(rw, http.StatusBadRequest, jsonErr(errors.New("gif doesn't exist")))
+		l.Notice("getting gif: " + err.Error())
+		return
+	}
+
+	rend.JSON(rw, http.StatusOK, map[string]string{"status": resp[0], "description": resp[1]})
 }
 
 func addURLToRedis(msg *api.PubSubMessage) (id string, err error) {
