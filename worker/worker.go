@@ -266,7 +266,7 @@ func stitch(payload api.PubSubMessage, workspace string) error {
 	// -monitor
 	cmd := exec.Command("/bin/bash", "-c",
 		"/usr/bin/gm convert +repage -fuzz 1.6% -delay 4 -loop 0 "+payload.PrevDir+"*.png "+
-			"gif:"+gifname,
+			"gif:-|/usr/bin/gifsicle -O3 --colors 256 > "+gifname,
 	)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
