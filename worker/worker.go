@@ -185,7 +185,8 @@ func markFailed(id, job, errormsg string) {
 	keyname := "gif:" + id
 
 	c.Send("MULTI")
-	c.Send("HSET", keyname, "status", "failed at "+job+". Error: "+errormsg)
+	c.Send("HSET", keyname, "status", "failed")
+	c.Send("HSET", keyname, "description", errormsg)
 	c.Send("PERSIST", keyname)
 	if _, err := c.Do("EXEC"); err != nil {
 		// since this is the failure marker, log it and move on
