@@ -131,7 +131,7 @@ func GifShowHandler(rw http.ResponseWriter, r *http.Request) {
 	conf := config.Get()
 	path := conf.Site.Gif_Dir + "/" + id + ".gif"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		rend.JSON(rw, http.StatusInternalServerError, jsonErr(errors.New("file doesn't exist")))
+		rend.JSON(rw, http.StatusNotFound, jsonErr(errors.New("file doesn't exist")))
 		l.Err("checking on disk path: " + err.Error())
 		return
 	}
