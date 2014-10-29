@@ -227,19 +227,30 @@ and uses mplayer to create a PNG file for every frame in the video*/
 func chop(payload api.PubSubMessage, workspace string) error {
 
 	// https://www.youtube.com/watch?v=dgKGixi8bp8 short video
-	// need to think more about more specific flags
-	// -sstep looks neat
-	//  When used in conjunction with -ss option, -endpos time will shift forward
-	// by seconds specified with -ss if not a byte position.
-	// crop[=w:h:x:y] rectangle[=w:h:x:y]
-	// scale[=w:h[:interlaced[:chr_drop[:par[:par2[:presize[:noup[:arnd]]]]]]]]
-	var flags = []string{"-ss", payload.Start, "-i", payload.PrevDir + payload.ID + ".youtube"}
-	if payload.Dur != "" {
-		flags = append(flags, "-t", payload.Dur)
+	var flags = []string{}
+
+	var wscale, hscale, xcoord, ycoord string
+
+	// avconv allows for math based on frame size
+	// scale the crop size/coords against the real one
+	if payload.Cx != "" {
+		wscale = "(in_w/" + payload.Vw + ")*" + payload.Cw
+		hscale = "(in_h/" + payload.Vh + ")*" + payload.Ch
+		xcoord = "(in_w/" + payload.Vw + ")*" + payload.Cx
+		ycoord = "(in_h/" + payload.Vh + ")*" + payload.Cy
 	}
 
 	flags = append(flags,
-		"-vf", "crop="+payload.Cw+":"+payload.Ch+":"+payload.Cx+":"+payload.Cy,
+		"-i", payload.PrevDir+payload.ID+".youtube",
+		"-vf", "crop="+wscale+":"+hscale+":"+xcoord+":"+ycoord+",scale="+payload.Cw+":"+payload.Ch,
+	)
+	if payload.Dur != "" {
+		flags = append(flags,
+			"-ss", payload.Start,
+			"-t", payload.Dur,
+		)
+	}
+	flags = append(flags,
 		workspace+"%08d.png",
 	)
 
