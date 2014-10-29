@@ -22,6 +22,8 @@ type PubSubMessage struct {
 	Cy      string `validate:"isOptionalNonNegative"`
 	Cw      string `validate:"isOptionalNonNegative"`
 	Ch      string `validate:"isOptionalNonNegative"`
+	Vw      string `validate:"isOptionalNonNegative"`
+	Vh      string `validate:"isOptionalNonNegative"`
 }
 
 // more structs?
