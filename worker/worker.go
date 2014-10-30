@@ -229,7 +229,7 @@ func chop(payload api.PubSubMessage, workspace string) error {
 	// https://www.youtube.com/watch?v=dgKGixi8bp8 short video
 	var flags = []string{}
 
-	var wscale, hscale, xcoord, ycoord string
+	var wscale, hscale, xcoord, ycoord, swidth, sheight string
 
 	// avconv allows for math based on frame size
 	// scale the crop size/coords against the real one
@@ -238,11 +238,16 @@ func chop(payload api.PubSubMessage, workspace string) error {
 		hscale = "(in_h/" + payload.Vh + ")*" + payload.Ch
 		xcoord = "(in_w/" + payload.Vw + ")*" + payload.Cx
 		ycoord = "(in_h/" + payload.Vh + ")*" + payload.Cy
+		swidth = payload.Cw
+		sheight = payload.Ch
+	} else {
+		swidth = payload.Vw
+		sheight = payload.Vh
 	}
 
 	flags = append(flags,
 		"-i", payload.PrevDir+payload.ID+".youtube",
-		"-vf", "crop="+wscale+":"+hscale+":"+xcoord+":"+ycoord+",scale="+payload.Cw+":"+payload.Ch,
+		"-vf", "crop="+wscale+":"+hscale+":"+xcoord+":"+ycoord+",scale="+swidth+":"+sheight,
 	)
 	if payload.Dur != "" {
 		flags = append(flags,
