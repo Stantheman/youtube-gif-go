@@ -207,7 +207,7 @@ func download(payload api.PubSubMessage, workspace string) error {
 		"--max-filesize", "100M",
 		"--output", outFile,
 		"--write-info-json",
-		"--format", "mp4",
+		"--format", "mp4,flv",
 		payload.URL,
 	)
 
